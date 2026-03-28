@@ -1,0 +1,14 @@
+# Logitech C920 Webcam udev rules
+# Copy to /etc/udev/rules.d/ and reload:
+#   sudo cp 99-c920.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+
+# Logitech C920 HD Pro Webcam
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="082d", ATTR{index}=="0", SYMLINK+="c920", MODE="0666"
+
+# Logitech C920e (business version)
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="08e5", ATTR{index}=="0", SYMLINK+="c920", MODE="0666"
+
+# Logitech C922 (similar camera)
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="085c", ATTR{index}=="0", SYMLINK+="c920", MODE="0666"

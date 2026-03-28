@@ -1,0 +1,46 @@
+/* Custom CSS for Open Manipulator X Documentation */
+
+/* Code block styling */
+.highlight pre {
+    font-size: 0.85em;
+    line-height: 1.4;
+}
+
+/* Table styling */
+table.docutils {
+    width: 100%;
+}
+
+/* Note and warning boxes */
+.admonition {
+    margin: 1.5em 0;
+}
+
+/* Command line examples */
+.highlight-bash .highlight {
+    background-color: #1e1e1e;
+}
+
+/* Inline code */
+code.literal {
+    background-color: #f4f4f4;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+/* Headers */
+h1, h2, h3 {
+    margin-top: 1.5em;
+}
+
+/* List tables */
+table.docutils td, table.docutils th {
+    padding: 8px 12px;
+}
+
+/* Responsive images */
+img {
+    max-width: 100%;
+    height: auto;
+}

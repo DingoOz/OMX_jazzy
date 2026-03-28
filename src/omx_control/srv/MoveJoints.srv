@@ -1,0 +1,11 @@
+# Move joints to target positions using forward kinematics
+# Request
+float64[] joint_positions           # Target joint positions in radians [joint1, joint2, joint3, joint4]
+float64 velocity_scaling 0.5        # Velocity scaling factor (0.0-1.0)
+float64 acceleration_scaling 0.5    # Acceleration scaling factor (0.0-1.0)
+bool wait_for_completion true       # Wait for motion to complete
+---
+# Response
+bool success                        # True if motion was successful
+string message                      # Status message or error description
+geometry_msgs/Pose final_pose       # Final end-effector pose after motion

@@ -1,0 +1,72 @@
+# Control parameters for Open Manipulator X
+# These parameters configure the IK, FK, and gripper controllers
+
+# IK Controller parameters
+ik_controller:
+  ros__parameters:
+    # Motion scaling (0.0-1.0)
+    velocity_scaling: 0.5
+    acceleration_scaling: 0.5
+
+    # Planning parameters
+    planning_time: 5.0
+    num_planning_attempts: 10
+
+    # Robot configuration
+    planning_group: "arm"
+    end_effector_link: "end_effector_link"
+    base_link: "link1"
+
+# FK Controller parameters
+fk_controller:
+  ros__parameters:
+    # Motion scaling (0.0-1.0)
+    velocity_scaling: 0.5
+    acceleration_scaling: 0.5
+
+    # Trajectory interpolation
+    interpolation_steps: 10
+
+    # Joint limits (radians) - from URDF
+    joint_limits:
+      joint1:
+        lower: -3.14159
+        upper: 3.14159
+      joint2:
+        lower: -1.5
+        upper: 1.5
+      joint3:
+        lower: -1.5
+        upper: 1.4
+      joint4:
+        lower: -1.7
+        upper: 1.97
+
+# Gripper Controller parameters
+gripper_controller:
+  ros__parameters:
+    # Gripper limits (meters) - from URDF
+    gripper_closed: -0.010
+    gripper_open: 0.019
+
+    # Default effort (0.0-1.0)
+    default_effort: 0.5
+
+    # Gripper speed (m/s)
+    gripper_speed: 0.02
+
+# Named positions (from SRDF group_states)
+# Placed under a wildcard node so any controller can access them
+/**:
+  ros__parameters:
+    named_positions:
+      init:
+        joint1: 0.0
+        joint2: 0.0
+        joint3: 0.0
+        joint4: 0.0
+      home:
+        joint1: 0.0
+        joint2: -1.0
+        joint3: 0.7
+        joint4: 0.3

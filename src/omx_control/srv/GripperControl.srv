@@ -1,0 +1,11 @@
+# Control the gripper
+# Request
+string command                      # Command: "open", "close", or "position"
+float64 position 0.0                # Gripper position (0.0=closed, 0.01=open) when command="position"
+float64 effort 0.5                  # Gripper effort/force (0.0-1.0)
+bool wait_for_completion true       # Wait for gripper action to complete
+---
+# Response
+bool success                        # True if gripper action was successful
+string message                      # Status message or error description
+float64 current_position            # Current gripper position after action

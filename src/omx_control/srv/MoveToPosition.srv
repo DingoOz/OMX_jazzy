@@ -1,0 +1,11 @@
+# Move end-effector to target position using inverse kinematics
+# Request
+geometry_msgs/Pose target_pose      # Target pose (position + orientation)
+float64 velocity_scaling 0.5        # Velocity scaling factor (0.0-1.0)
+float64 acceleration_scaling 0.5    # Acceleration scaling factor (0.0-1.0)
+bool wait_for_completion true       # Wait for motion to complete
+---
+# Response
+bool success                        # True if motion was successful
+string message                      # Status message or error description
+float64[] final_joint_positions     # Final joint positions after motion

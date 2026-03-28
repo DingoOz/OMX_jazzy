@@ -39,3 +39,14 @@
 
 # debug information files
 *.dwo
+
+# ROS2/colcon build artifacts
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+_build/

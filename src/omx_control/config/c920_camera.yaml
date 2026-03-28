@@ -1,0 +1,38 @@
+# Logitech C920 Camera Configuration
+# Optimized settings for robotics/manipulation tasks
+
+camera_node:
+  ros__parameters:
+    # Device settings
+    video_device: "/dev/video0"
+    framerate: 30.0
+    io_method: "mmap"
+
+    # Resolution - C920 supports up to 1080p
+    # Options: 1920x1080, 1280x720, 640x480
+    image_width: 1280
+    image_height: 720
+
+    # Pixel format
+    pixel_format: "yuyv"  # or "mjpeg" for compressed
+
+    # Color settings
+    brightness: 128
+    contrast: 128
+    saturation: 128
+    sharpness: 128
+
+    # Auto settings (recommended for varying lighting)
+    autofocus: true
+    focus: 0  # Only used if autofocus is false (0-255)
+    autoexposure: true
+    exposure: 166  # Only used if autoexposure is false
+    auto_white_balance: true
+    white_balance: 4000
+
+    # Camera info (for calibration)
+    camera_frame_id: "camera_link"
+    camera_name: "c920"
+
+    # Camera calibration file (optional - create with camera_calibration package)
+    # camera_info_url: "file:///home/dingo/.ros/camera_info/c920.yaml"
