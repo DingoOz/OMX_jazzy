@@ -538,6 +538,28 @@ rviz2 -d $(ros2 pkg prefix open_manipulator_moveit_config)/share/open_manipulato
 
 ---
 
+## Extending the Arm
+
+To add a new joint, see [`docs/adding_a_joint.md`](docs/adding_a_joint.md).
+Two helper scripts live in `scripts/`:
+
+- `scripts/add_joint.py` scaffolds the edits across URDF, ros2_control,
+  MoveIt, and the `omx_control` Python nodes.
+- `scripts/verify_joints.sh` checks that every layer references the
+  same joint set.
+
+```bash
+# Preview the edits a new joint would make (dry-run by default)
+python3 scripts/add_joint.py --name joint5 --dxl-id 16
+
+# Apply, then sanity-check
+python3 scripts/add_joint.py --name joint5 --dxl-id 16 --apply
+./scripts/verify_joints.sh
+colcon build --symlink-install --allow-overriding dynamixel_sdk
+```
+
+---
+
 ## License
 
 Apache-2.0

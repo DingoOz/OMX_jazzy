@@ -45,6 +45,7 @@ Quick Start
    control_examples
    camera
    simulation
+   adding_a_joint
 
 .. toctree::
    :maxdepth: 2
