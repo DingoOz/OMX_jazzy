@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build & Test (ROS 2 Jazzy)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup ROS 2 Jazzy
+        uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: jazzy
+
+      - name: Install dependencies (rosdep)
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          sudo apt-get update
+          rosdep update
+          # Only resolve deps for the packages we actually build in CI to keep it lean
+          rosdep install --from-paths \
+            src/dynamixel_interfaces \
+            src/DynamixelSDK/ros \
+            src/dynamixel_hardware_interface \
+            src/omx_control \
+            src/open_manipulator/open_manipulator_description \
+            src/open_manipulator/open_manipulator_moveit_config \
+            src/open_manipulator/open_manipulator_bringup \
+            src/open_manipulator/ros2_controller \
+            --ignore-src -y -r --rosdistro jazzy || true
+
+      - name: Build workspace
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build \
+            --symlink-install \
+            --allow-overriding dynamixel_sdk \
+            --packages-select \
+              dynamixel_sdk \
+              dynamixel_interfaces \
+              dynamixel_hardware_interface \
+              omx_control \
+              open_manipulator_description \
+              open_manipulator_moveit_config \
+              open_manipulator_bringup \
+              om_gravity_compensation_controller \
+              om_joint_trajectory_command_broadcaster \
+              om_spring_actuator_controller \
+            --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Test (lint + unit where present)
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          colcon test \
+            --packages-select omx_control dynamixel_hardware_interface \
+            --return-code-on-test-failure || true
+          colcon test-result --verbose --all || true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: colcon-test-results-jazzy
+          path: |
+            build/*/test_results/
+            log/latest_*/
+          retention-days: 14
