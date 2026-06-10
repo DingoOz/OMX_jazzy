@@ -13,6 +13,8 @@ from geometry_msgs.msg import Pose, PoseStamped
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Header
 
+from omx_control.srv import MoveToPosition
+
 from moveit_msgs.msg import RobotState, Constraints, PositionConstraint, OrientationConstraint
 from moveit_msgs.srv import GetPositionIK, GetCartesianPath
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -46,17 +48,27 @@ class IKController(Node):
         # Callback group for concurrent callbacks
         self.callback_group = ReentrantCallbackGroup()
 
-        # Declare parameters
+        # Declare parameters (primarily from control_params.yaml under ik_controller:)
         self.declare_parameter('velocity_scaling', 0.5)
         self.declare_parameter('acceleration_scaling', 0.5)
         self.declare_parameter('planning_time', 5.0)
         self.declare_parameter('num_planning_attempts', 10)
+
+        # Robot configuration (also in yaml for consistency across nodes)
+        self.declare_parameter('planning_group', 'arm')
+        self.declare_parameter('end_effector_link', 'end_effector_link')
+        self.declare_parameter('base_link', 'link1')
 
         # Get parameters
         self.velocity_scaling = self.get_parameter('velocity_scaling').value
         self.acceleration_scaling = self.get_parameter('acceleration_scaling').value
         self.planning_time = self.get_parameter('planning_time').value
         self.num_planning_attempts = self.get_parameter('num_planning_attempts').value
+
+        # Update from params so the rest of the class can use self. versions
+        self.PLANNING_GROUP = self.get_parameter('planning_group').value
+        self.END_EFFECTOR_LINK = self.get_parameter('end_effector_link').value
+        self.BASE_LINK = self.get_parameter('base_link').value
 
         # Current joint state
         self.current_joint_state: Optional[JointState] = None
@@ -100,11 +112,12 @@ class IKController(Node):
             callback_group=self.callback_group
         )
 
-        # Publisher for current end-effector pose (for feedback)
-        self.current_pose_pub = self.create_publisher(
-            PoseStamped,
-            '/omx/current_pose',
-            10
+        # Custom high-level service (documented API)
+        self.move_to_position_srv = self.create_service(
+            MoveToPosition,
+            '/omx/move_to_position',
+            self._move_to_position_callback,
+            callback_group=self.callback_group
         )
 
         self.get_logger().info('IK Controller initialized')
@@ -119,7 +132,7 @@ class IKController(Node):
         self.get_logger().info(f'Received target pose: [{msg.pose.position.x:.3f}, '
                               f'{msg.pose.position.y:.3f}, {msg.pose.position.z:.3f}]')
 
-        success, message = self.move_to_pose(
+        success, message, _ = self.move_to_pose(
             msg.pose,
             self.velocity_scaling,
             self.acceleration_scaling,
@@ -251,22 +264,28 @@ class IKController(Node):
     def move_to_pose(self, target_pose: Pose,
                      velocity_scaling: float = 0.5,
                      acceleration_scaling: float = 0.5,
-                     wait: bool = True) -> tuple[bool, str]:
-        """Move end-effector to target pose using IK."""
+                     wait: bool = True) -> tuple[bool, str, Optional[List[float]]]:
+        """Move end-effector to target pose using IK.
+
+        Returns (success, message, joint_positions_or_None).
+        The joint positions are the IK solution that was commanded (useful for
+        the MoveToPosition service response and for callers that want the final joints).
+        """
         # Compute IK solution
         joint_positions = self.compute_ik(target_pose)
         if joint_positions is None:
-            return False, 'Could not compute IK solution'
+            return False, 'Could not compute IK solution', None
 
         self.get_logger().info(f'IK solution: {[f"{p:.3f}" for p in joint_positions]}')
 
         # Execute trajectory
-        return self.execute_trajectory(
+        success, message = self.execute_trajectory(
             joint_positions,
             velocity_scaling,
             acceleration_scaling,
             wait
         )
+        return success, message, joint_positions
 
     def move_to_position(self, x: float, y: float, z: float,
                         qx: float = 0.0, qy: float = 0.0,
@@ -285,6 +304,32 @@ class IKController(Node):
         pose.orientation.w = qw
 
         return self.move_to_pose(pose, velocity_scaling, acceleration_scaling, wait)
+
+    def _move_to_position_callback(self, request: MoveToPosition.Request,
+                                   response: MoveToPosition.Response) -> MoveToPosition.Response:
+        """ROS 2 service handler for the documented MoveToPosition API."""
+        self.get_logger().info(
+            f'Service MoveToPosition: '
+            f'[{request.target_pose.position.x:.3f}, '
+            f'{request.target_pose.position.y:.3f}, '
+            f'{request.target_pose.position.z:.3f}] '
+            f'wait={request.wait_for_completion}'
+        )
+
+        vel = request.velocity_scaling if request.velocity_scaling > 0.0 else self.velocity_scaling
+        acc = request.acceleration_scaling if request.acceleration_scaling > 0.0 else self.acceleration_scaling
+
+        success, message, joints = self.move_to_pose(
+            request.target_pose,
+            vel,
+            acc,
+            wait=request.wait_for_completion
+        )
+
+        response.success = success
+        response.message = message
+        response.final_joint_positions = joints or []
+        return response
 
 
 def main(args=None):

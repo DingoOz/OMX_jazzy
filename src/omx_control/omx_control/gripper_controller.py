@@ -12,6 +12,8 @@ from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import Float64, String
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+from omx_control.srv import GripperControl
 from control_msgs.action import FollowJointTrajectory
 
 from rclpy.action import ActionClient
@@ -26,21 +28,21 @@ class GripperController(Node):
     # Gripper joint names
     GRIPPER_JOINTS = ['gripper_left_joint']  # Right joint is mirrored
 
-    # Gripper limits (meters) from URDF
-    GRIPPER_CLOSED = -0.010  # Fully closed
-    GRIPPER_OPEN = 0.019     # Fully open
-
     def __init__(self):
         super().__init__('gripper_controller')
 
         # Callback group for concurrent callbacks
         self.callback_group = ReentrantCallbackGroup()
 
-        # Declare parameters
+        # Declare parameters (values come from control_params.yaml or launch overrides)
+        self.declare_parameter('gripper_closed', -0.010)
+        self.declare_parameter('gripper_open', 0.019)
         self.declare_parameter('default_effort', 0.5)
         self.declare_parameter('gripper_speed', 0.02)  # m/s
 
-        # Get parameters
+        # Get parameters - source of truth is the parameter server / yaml
+        self.gripper_closed = self.get_parameter('gripper_closed').value
+        self.gripper_open = self.get_parameter('gripper_open').value
         self.default_effort = self.get_parameter('default_effort').value
         self.gripper_speed = self.get_parameter('gripper_speed').value
 
@@ -92,8 +94,16 @@ class GripperController(Node):
         # Timer for publishing state
         self.state_timer = self.create_timer(0.1, self.publish_state)
 
+        # Custom high-level service (documented API)
+        self.gripper_control_srv = self.create_service(
+            GripperControl,
+            '/omx/gripper_control',
+            self._gripper_control_callback,
+            callback_group=self.callback_group
+        )
+
         self.get_logger().info('Gripper Controller initialized')
-        self.get_logger().info(f'Gripper range: [{self.GRIPPER_CLOSED:.3f}, {self.GRIPPER_OPEN:.3f}] m')
+        self.get_logger().info(f'Gripper range: [{self.gripper_closed:.3f}, {self.gripper_open:.3f}] m')
 
     def joint_state_callback(self, msg: JointState):
         """Store current joint state."""
@@ -149,10 +159,10 @@ class GripperController(Node):
 
     def validate_position(self, position: float) -> tuple[bool, str, float]:
         """Validate and clamp gripper position."""
-        if position < self.GRIPPER_CLOSED:
-            return True, f'Position clamped to closed ({self.GRIPPER_CLOSED})', self.GRIPPER_CLOSED
-        elif position > self.GRIPPER_OPEN:
-            return True, f'Position clamped to open ({self.GRIPPER_OPEN})', self.GRIPPER_OPEN
+        if position < self.gripper_closed:
+            return True, f'Position clamped to closed ({self.gripper_closed})', self.gripper_closed
+        elif position > self.gripper_open:
+            return True, f'Position clamped to open ({self.gripper_open})', self.gripper_open
         return True, 'Valid', position
 
     def execute_gripper_trajectory(self, target_position: float,
@@ -217,12 +227,12 @@ class GripperController(Node):
     def open_gripper(self, wait: bool = True) -> tuple[bool, str]:
         """Open the gripper fully."""
         self.get_logger().info('Opening gripper...')
-        return self.execute_gripper_trajectory(self.GRIPPER_OPEN, wait)
+        return self.execute_gripper_trajectory(self.gripper_open, wait)
 
     def close_gripper(self, wait: bool = True) -> tuple[bool, str]:
         """Close the gripper fully."""
         self.get_logger().info('Closing gripper...')
-        return self.execute_gripper_trajectory(self.GRIPPER_CLOSED, wait)
+        return self.execute_gripper_trajectory(self.gripper_closed, wait)
 
     def set_position(self, position: float,
                      wait: bool = True) -> tuple[bool, str, float]:
@@ -245,9 +255,35 @@ class GripperController(Node):
         if position is None:
             return None
 
-        range_size = self.GRIPPER_OPEN - self.GRIPPER_CLOSED
-        percentage = (position - self.GRIPPER_CLOSED) / range_size * 100.0
+        range_size = self.gripper_open - self.gripper_closed
+        percentage = (position - self.gripper_closed) / range_size * 100.0
         return max(0.0, min(100.0, percentage))
+
+    def _gripper_control_callback(self, request: GripperControl.Request,
+                                  response: GripperControl.Response) -> GripperControl.Response:
+        """ROS 2 service handler for the documented GripperControl API."""
+        cmd = (request.command or '').lower().strip()
+        wait = request.wait_for_completion
+        # effort is part of the documented request for future/current-limit use cases;
+        # the current implementation drives the gripper via position trajectory at a
+        # configured speed (effort/current limits are configured in the ros2_control xacro).
+        if cmd == 'open':
+            success, message = self.open_gripper(wait=wait)
+            pos = self.get_current_gripper_position() or 0.0
+        elif cmd == 'close':
+            success, message = self.close_gripper(wait=wait)
+            pos = self.get_current_gripper_position() or 0.0
+        elif cmd == 'position':
+            success, message, pos = self.set_position(request.position, wait=wait)
+        else:
+            success = False
+            message = f'Unknown command: "{cmd}". Use "open", "close", or "position"'
+            pos = self.get_current_gripper_position() or 0.0
+
+        response.success = success
+        response.message = message
+        response.current_position = pos if pos is not None else 0.0
+        return response
 
 
 def main(args=None):

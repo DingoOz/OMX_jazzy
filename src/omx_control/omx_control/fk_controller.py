@@ -13,12 +13,17 @@ from geometry_msgs.msg import Pose, PoseStamped
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Header
 
+from omx_control.srv import MoveJoints
+
 from moveit_msgs.srv import GetPositionFK
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from control_msgs.action import FollowJointTrajectory
 
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
+
+import tf2_ros
+from tf2_ros import TransformException
 
 import numpy as np
 from typing import List, Optional
@@ -29,14 +34,6 @@ class FKController(Node):
 
     # Joint names for the arm (excluding gripper)
     ARM_JOINTS = ['joint1', 'joint2', 'joint3', 'joint4']
-
-    # Joint limits (radians) from URDF
-    JOINT_LIMITS = {
-        'joint1': (-3.14159, 3.14159),   # -pi to pi
-        'joint2': (-1.5, 1.5),
-        'joint3': (-1.5, 1.4),
-        'joint4': (-1.7, 1.97),
-    }
 
     # Planning group name from SRDF
     PLANNING_GROUP = 'arm'
@@ -53,15 +50,47 @@ class FKController(Node):
         # Callback group for concurrent callbacks
         self.callback_group = ReentrantCallbackGroup()
 
-        # Declare parameters
+        # Declare parameters (values primarily come from control_params.yaml)
         self.declare_parameter('velocity_scaling', 0.5)
         self.declare_parameter('acceleration_scaling', 0.5)
         self.declare_parameter('interpolation_steps', 10)
+
+        # Joint limits and named positions are provided by the yaml under fk_controller and /**
+        # Declare with defaults matching the yaml for safety if no param file is used.
+        default_limits = {
+            'joint1': (-3.14159, 3.14159),
+            'joint2': (-1.5, 1.5),
+            'joint3': (-1.5, 1.4),
+            'joint4': (-1.7, 1.97),
+        }
+        self.declare_parameter('joint_limits', default_limits)
+
+        default_named = {
+            'init': [0.0, 0.0, 0.0, 0.0],
+            'home': [0.0, -1.0, 0.7, 0.3],
+        }
+        self.declare_parameter('named_positions', default_named)
 
         # Get parameters
         self.velocity_scaling = self.get_parameter('velocity_scaling').value
         self.acceleration_scaling = self.get_parameter('acceleration_scaling').value
         self.interpolation_steps = self.get_parameter('interpolation_steps').value
+
+        # Load joint limits from parameter (yaml or override)
+        self.joint_limits = default_limits
+        try:
+            jl = self.get_parameter('joint_limits').value
+            if isinstance(jl, dict):
+                loaded = {}
+                for j, v in jl.items():
+                    if isinstance(v, dict) and 'lower' in v and 'upper' in v:
+                        loaded[j] = (float(v['lower']), float(v['upper']))
+                    elif isinstance(v, (list, tuple)) and len(v) == 2:
+                        loaded[j] = (float(v[0]), float(v[1]))
+                if loaded:
+                    self.joint_limits = loaded
+        except Exception as e:
+            self.get_logger().warn(f'Using default joint limits: {e}')
 
         # Current joint state
         self.current_joint_state: Optional[JointState] = None
@@ -113,6 +142,26 @@ class FKController(Node):
             10
         )
 
+        # Custom high-level service (documented API)
+        self.move_joints_srv = self.create_service(
+            MoveJoints,
+            '/omx/move_joints',
+            self._move_joints_callback,
+            callback_group=self.callback_group
+        )
+
+        # TF for current end-effector pose (published from the node that already
+        # owns joint filtering and FK). This makes /omx/current_pose actually work
+        # (previously the publisher was created in both controllers but never used).
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
+        # Publish current pose at a sensible monitoring rate (TF lookup is cheap;
+        # we avoid doing it at full joint_states rate).
+        self.current_pose_timer = self.create_timer(
+            0.1, self._publish_current_pose, callback_group=self.callback_group
+        )
+
         self.get_logger().info('FK Controller initialized')
         self.get_logger().info(f'Arm joints: {self.ARM_JOINTS}')
 
@@ -139,6 +188,45 @@ class FKController(Node):
                     arm_state.effort.append(msg.effort[idx])
 
         self.arm_joints_pub.publish(arm_state)
+
+    def _publish_current_pose(self):
+        """Publish the current end-effector pose by looking up the TF tree.
+
+        The tree is maintained by robot_state_publisher from the URDF + current
+        /joint_states. This is the authoritative "where the arm actually is" and
+        works in both real hardware and simulation without requiring the MoveIt
+        FK service.
+        """
+        if self.current_joint_state is None:
+            return
+
+        # Quick check that we have a complete arm state
+        if self.get_current_arm_positions() is None:
+            return
+
+        try:
+            # Use zero time for latest available transform
+            trans = self.tf_buffer.lookup_transform(
+                self.BASE_LINK,
+                self.END_EFFECTOR_LINK,
+                rclpy.time.Time(),  # latest
+                timeout=Duration(seconds=0.1).to_msg()
+            )
+
+            pose_msg = PoseStamped()
+            pose_msg.header = trans.header
+            # Ensure consistent base frame
+            pose_msg.header.frame_id = self.BASE_LINK
+            pose_msg.pose.position.x = trans.transform.translation.x
+            pose_msg.pose.position.y = trans.transform.translation.y
+            pose_msg.pose.position.z = trans.transform.translation.z
+            pose_msg.pose.orientation = trans.transform.rotation
+
+            self.current_pose_pub.publish(pose_msg)
+        except TransformException as ex:
+            # Transient during startup or if TF tree not fully populated yet.
+            # Avoid log spam at 10 Hz.
+            self.get_logger().debug(f'Could not lookup current EE pose TF: {ex}')
 
     def target_joints_callback(self, msg: JointState):
         """Handle target joints from topic."""
@@ -181,12 +269,14 @@ class FKController(Node):
         return positions
 
     def validate_joint_positions(self, positions: List[float]) -> tuple[bool, str]:
-        """Validate joint positions against limits."""
+        """Validate joint positions against limits (loaded from control_params.yaml)."""
         if len(positions) != len(self.ARM_JOINTS):
             return False, f'Expected {len(self.ARM_JOINTS)} positions, got {len(positions)}'
 
         for i, (joint_name, pos) in enumerate(zip(self.ARM_JOINTS, positions)):
-            lower, upper = self.JOINT_LIMITS[joint_name]
+            if joint_name not in self.joint_limits:
+                continue
+            lower, upper = self.joint_limits[joint_name]
             if pos < lower or pos > upper:
                 return False, f'{joint_name} position {pos:.3f} outside limits [{lower:.3f}, {upper:.3f}]'
 
@@ -324,22 +414,53 @@ class FKController(Node):
                                velocity_scaling: float = 0.5,
                                acceleration_scaling: float = 0.5,
                                wait: bool = True) -> tuple[bool, str, Optional[Pose]]:
-        """Move to a named position (from SRDF group_state)."""
-        # Predefined positions from SRDF
-        named_positions = {
+        """Move to a named position (loaded from control_params.yaml under /**: named_positions)."""
+        named = self.get_parameter('named_positions').value or {
             'init': [0.0, 0.0, 0.0, 0.0],
             'home': [0.0, -1.0, 0.7, 0.3],
         }
 
-        if name not in named_positions:
-            return False, f'Unknown position: {name}. Available: {list(named_positions.keys())}', None
+        if name not in named:
+            available = list(named.keys()) if isinstance(named, dict) else []
+            return False, f'Unknown position: {name}. Available: {available}', None
+
+        # Convert dict form {joint1: val, ...} to ordered list for our joints
+        if isinstance(named[name], dict):
+            pos_list = [named[name].get(j, 0.0) for j in self.ARM_JOINTS]
+        else:
+            pos_list = list(named[name])
 
         return self.move_joints(
-            named_positions[name],
+            pos_list,
             velocity_scaling,
             acceleration_scaling,
             wait
         )
+
+    def _move_joints_callback(self, request: MoveJoints.Request,
+                              response: MoveJoints.Response) -> MoveJoints.Response:
+        """ROS 2 service handler for the documented MoveJoints API."""
+        positions = list(request.joint_positions)
+        self.get_logger().info(
+            f'Service MoveJoints: {["{:.3f}".format(p) for p in positions]} '
+            f'wait={request.wait_for_completion}'
+        )
+
+        vel = request.velocity_scaling if request.velocity_scaling > 0.0 else self.velocity_scaling
+        acc = request.acceleration_scaling if request.acceleration_scaling > 0.0 else self.acceleration_scaling
+
+        success, message, final_pose = self.move_joints(
+            positions,
+            vel,
+            acc,
+            wait=request.wait_for_completion
+        )
+
+        response.success = success
+        response.message = message
+        if final_pose is not None:
+            response.final_pose = final_pose
+        return response
 
 
 def main(args=None):
