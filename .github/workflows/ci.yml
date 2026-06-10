@@ -29,7 +29,8 @@ jobs:
           source /opt/ros/jazzy/setup.bash
           sudo apt-get update
           rosdep update
-          # Only resolve deps for the packages we actually build in CI to keep it lean
+          # Only resolve deps for the packages we actually build in CI to keep it lean.
+          # Skip dynamixel_sdk so the submodule version is used (prevents conflict with ros-jazzy-dynamixel-sdk from apt).
           rosdep install --from-paths \
             src/dynamixel_interfaces \
             src/DynamixelSDK/ros \
@@ -39,14 +40,13 @@ jobs:
             src/open_manipulator/open_manipulator_moveit_config \
             src/open_manipulator/open_manipulator_bringup \
             src/open_manipulator/ros2_controller \
-            --ignore-src -y -r --rosdistro jazzy || true
+            --ignore-src -y -r --rosdistro jazzy --skip-keys "dynamixel_sdk" || true
 
       - name: Build workspace
         run: |
           source /opt/ros/jazzy/setup.bash
           colcon build \
             --symlink-install \
-            --allow-overriding dynamixel_sdk \
             --packages-select \
               dynamixel_sdk \
               dynamixel_interfaces \
