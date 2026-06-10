@@ -17,3 +17,13 @@ This file records bugs, defects, incorrect patterns, and significant omissions d
 ## Summary (as of first entry)
 - Primary recurring risk area: mismatch between advertised ROS API surface (topics/services/actions in docs + launch examples) and actual server/client code in the thin `omx_control` Python nodes.
 - Recommendation: any future extension (new joints via the add_joint script, new controllers, camera features, etc.) should include an automated "does the documented interface exist at runtime?" check or at least an explicit service/topic list assertion in the verification steps.
+
+### CI used --allow-overriding flag that was unrecognized in setup-ros env — 2026-06-10
+
+- **Severity:** Medium
+- **Category:** Configuration
+- **File(s):** `.github/workflows/ci.yml`
+- **Pattern:** Using `colcon build --symlink-install --allow-overriding <pkg>` (to prefer a vendored submodule copy over an apt-installed ROS package) directly in a GitHub Actions step after `ros-tooling/setup-ros` + a `rosdep install --from-paths` that did not skip the conflicting package.
+- **Root cause:** `--allow-overriding` is registered by the `colcon-package-selection` extension. In the fresh environment created by setup-ros (which installs colcon-* debs + runs its own apt for dev tools) + rosdep pulling transitive depends like `dynamixel_sdk` for `dynamixel_hardware_interface`, the colcon parser in the "Build workspace" step did not accept the flag and errored with "unrecognized arguments". The flag works in a long-lived local dev workspace but not reliably in this minimal CI setup. The build step failed immediately; later steps were skipped.
+- **Fix applied:** (1) Added `--skip-keys "dynamixel_sdk"` to the targeted rosdep command so the apt version is never installed. (2) Removed the `--allow-overriding dynamixel_sdk` line from the colcon build (the packages-select now builds the pure submodule copy). This matches the intent of the original README command while being robust for CI.
+- **Prevention rule:** For packages that exist both as git submodules and as ros-*-<name> debs (DynamixelSDK family is a recurring case), always use rosdep `--skip-keys` in CI workflows instead of (or in addition to) relying on `--allow-overriding` at build time. Prefer testing the exact sequence (setup-ros + rosdep with the same --from-paths + colcon with the project's flags) when adding CI. Consider `ros-tooling/action-ros-ci` for future workflows as it is already used successfully by the vendored open_manipulator stack.
