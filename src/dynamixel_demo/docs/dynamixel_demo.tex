@@ -1,0 +1,218 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,urlcolor=blue,linkcolor=black]{hyperref}
+
+\definecolor{codebg}{rgb}{0.96,0.96,0.96}
+\definecolor{codekw}{rgb}{0.0,0.3,0.6}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framesep=4pt,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+}
+
+\title{\textbf{Controlling a Single Dynamixel Servo}\\[4pt]
+  \large A hands-on demo: raw DynamixelSDK and ROS~2}
+\author{OMX\_jazzy workspace --- \texttt{dynamixel\_demo} package}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent This guide walks you through controlling a single ROBOTIS Dynamixel
+X-series servo sitting on your bench. You will first drive it directly with the
+\textbf{DynamixelSDK} (plain Python, no ROS), then with a minimal \textbf{ROS~2}
+node. Both demos live in the \texttt{dynamixel\_demo} package of this workspace and
+work with one servo wired to a U2D2 USB interface.
+\end{abstract}
+
+\tableofcontents
+\vspace{1em}
+
+% ---------------------------------------------------------------------------
+\section{Overview}
+The \texttt{dynamixel\_demo} package contains two self-contained demos:
+\begin{description}[leftmargin=1.6cm,style=nextline]
+  \item[Demo~1 --- \texttt{single\_servo\_demo.py}] Pure Python using the
+    DynamixelSDK. It opens the serial port, \emph{pings} the servo to confirm
+    wiring, enables torque, sweeps the horn between two positions while printing
+    the measured position, then disables torque. No ROS required.
+  \item[Demo~2 --- \texttt{servo\_ros\_node.py}] A minimal ROS~2 (\texttt{rclpy})
+    node that opens the port itself and exposes two topics: it subscribes to a
+    target angle on \texttt{/dxl/goal\_position} and publishes the measured angle
+    on \texttt{/dxl/present\_position}. No MoveIt or ros2\_control needed.
+\end{description}
+
+Working through both shows the same hardware from two levels: the low-level byte
+protocol, and the topic-based ROS~2 abstraction built on top of it.
+
+% ---------------------------------------------------------------------------
+\section{What you need (bill of materials)}
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Item} & \textbf{Notes} \\
+\midrule
+Dynamixel X-series servo & XL430-W250 or XM430-W350 (as used on the OMX). \\
+U2D2 interface & USB-to-TTL/RS-485 adapter for Dynamixel. \\
+U2D2 Power Hub Board & Or a 3-pin connection plus external power. \\
+12\,V SMPS power supply & Powers the servo bus (X-series is 12\,V). \\
+Robot cable (3-pin JST) & Connects the servo to the U2D2 / power hub. \\
+USB cable & U2D2 to your computer. \\
+\bottomrule
+\end{tabular}
+\caption{Hardware for the single-servo demo.}
+\end{table}
+
+\paragraph{Wiring.} Connect the 12\,V supply to the U2D2 Power Hub, daisy-chain
+the servo to the hub with a robot cable, and plug the U2D2 into your computer over
+USB. The servo has two identical 3-pin ports --- either may be used; the second is
+for chaining further servos. \textbf{Always apply 12\,V power before expecting the
+servo to respond}, and never hot-plug the power while torque is enabled.
+
+% ---------------------------------------------------------------------------
+\section{Finding the serial port and fixing permissions}
+When you plug in the U2D2 it appears as a USB serial device, usually
+\texttt{/dev/ttyUSB0}.
+\begin{lstlisting}[language=bash]
+ls /dev/ttyUSB*        # list candidate ports
+dmesg | tail           # shows the device that was just attached
+\end{lstlisting}
+
+If running a demo prints a \emph{permission denied} error, add yourself to the
+\texttt{dialout} group (then log out and back in):
+\begin{lstlisting}[language=bash]
+sudo usermod -aG dialout $USER
+\end{lstlisting}
+
+\paragraph{Baud rate and ID.} Every Dynamixel ships from the factory with
+\textbf{ID~1} and a baud rate of \textbf{57600}. The demos default to these. If you
+took the servo off an assembled Open Manipulator~X, its bus runs at
+\textbf{1\,000\,000} baud instead --- pass \texttt{-{}-baud 1000000}. If a ping
+fails, a wrong baud rate is the most common cause.
+
+% ---------------------------------------------------------------------------
+\section{Build and source the workspace}
+\begin{lstlisting}[language=bash]
+cd ~/Programming/OMX_jazzy
+colcon build --packages-select dynamixel_demo --symlink-install \
+    --allow-overriding dynamixel_sdk
+source install/setup.bash
+\end{lstlisting}
+The \texttt{dynamixel\_sdk} Python module is already vendored in this workspace, so
+no extra installation is required.
+
+% ---------------------------------------------------------------------------
+\section{Demo 1: direct control with the DynamixelSDK}
+Run the standalone demo (no ROS core needed):
+\begin{lstlisting}[language=bash]
+ros2 run dynamixel_demo single_servo_demo --port /dev/ttyUSB0 --id 1 --baud 57600
+# or simply:
+python3 src/dynamixel_demo/dynamixel_demo/single_servo_demo.py --port /dev/ttyUSB0
+\end{lstlisting}
+
+Useful flags: \texttt{-{}-cycles N} (number of moves), \texttt{-{}-min} /
+\texttt{-{}-max} (raw goal positions, $0\ldots4095$). Expected output:
+\begin{lstlisting}
+[ OK ] Opened port /dev/ttyUSB0
+[ OK ] Baud rate set to 57600
+[ OK ] Found Dynamixel ID 1 (model number 1060)
+[ OK ] Torque enabled -- the servo is now holding position
+
+  [ID:001] cycle 1/4  GoalPos:1024  PresPos:2047
+  [ID:001] cycle 1/4  GoalPos:1024  PresPos:1031
+  [ID:001] cycle 2/4  GoalPos:3072  PresPos:1040
+  ...
+[ OK ] Sweep complete.
+[ OK ] Torque disabled -- the horn now turns freely.
+[ OK ] Port closed.
+\end{lstlisting}
+The servo physically sweeps back and forth. When the demo ends it disables torque,
+so the horn turns freely again.
+
+% ---------------------------------------------------------------------------
+\section{Demo 2: basic control with ROS 2}
+Launch the node:
+\begin{lstlisting}[language=bash]
+ros2 launch dynamixel_demo servo_demo.launch.py port:=/dev/ttyUSB0 baud:=57600 dxl_id:=1
+\end{lstlisting}
+
+In a second terminal, command a target \textbf{angle in radians} (0 is the encoder
+centre; the usable range is about $\pm\pi$):
+\begin{lstlisting}[language=bash]
+ros2 topic pub --once /dxl/goal_position std_msgs/msg/Float64 "{data: 0.5}"
+ros2 topic pub --once /dxl/goal_position std_msgs/msg/Float64 "{data: -0.5}"
+\end{lstlisting}
+
+In a third terminal, watch the measured angle stream back:
+\begin{lstlisting}[language=bash]
+ros2 topic echo /dxl/present_position
+\end{lstlisting}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Topic} & \textbf{Type} & \textbf{Meaning} \\
+\midrule
+\texttt{/dxl/goal\_position} & \texttt{std\_msgs/Float64} & Target angle [rad] (you publish) \\
+\texttt{/dxl/present\_position} & \texttt{std\_msgs/Float64} & Measured angle [rad] (node publishes) \\
+\bottomrule
+\end{tabular}
+\caption{Topics exposed by the ROS~2 demo node.}
+\end{table}
+Stop the node with \texttt{Ctrl-C}; it disables torque and closes the port on exit.
+
+% ---------------------------------------------------------------------------
+\section{Troubleshooting}
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}p{5cm}p{8.5cm}@{}}
+\toprule
+\textbf{Symptom} & \textbf{Fix} \\
+\midrule
+\emph{Could not open port} & Wrong device name --- check \texttt{ls /dev/ttyUSB*}; pass the right \texttt{-{}-port}. \\
+\emph{Permission denied} & Add yourself to the \texttt{dialout} group and re-login. \\
+\emph{No response from ID~1} (ping fails) & Wrong baud (try \texttt{-{}-baud 1000000}), wrong ID, no 12\,V power, or a loose cable. \\
+Servo does not move but ping works & Goal outside the servo's position limit, or it is in an error state --- power-cycle it. \\
+Horn is limp / not holding & Torque is disabled (normal after a demo exits). \\
+\bottomrule
+\end{tabular}
+\caption{Common problems and fixes.}
+\end{table}
+
+% ---------------------------------------------------------------------------
+\appendix
+\section{X-series control table reference}
+The demos use the Protocol~2.0 control table shared by the XL430 and XM430:
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Item} & \textbf{Address} & \textbf{Size (bytes)} & \textbf{Notes} \\
+\midrule
+Torque Enable     & 64  & 1 & 1 = on, 0 = off \\
+Goal Position     & 116 & 4 & Target, raw $0\ldots4095$ \\
+Present Position  & 132 & 4 & Measured, raw $0\ldots4095$ \\
+\bottomrule
+\end{tabular}
+\caption{Control-table addresses used by the demos.}
+\end{table}
+A full revolution spans 4096 raw units (a 12-bit encoder), centred at 2048. The
+ROS~2 node converts between raw units and radians with
+$\text{rad} = (\text{tick}-2048)\,/\,4096 \times 2\pi$.
+
+\end{document}

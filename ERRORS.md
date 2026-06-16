@@ -27,3 +27,13 @@ This file records bugs, defects, incorrect patterns, and significant omissions d
 - **Root cause:** `--allow-overriding` is registered by the `colcon-package-selection` extension. In the fresh environment created by setup-ros (which installs colcon-* debs + runs its own apt for dev tools) + rosdep pulling transitive depends like `dynamixel_sdk` for `dynamixel_hardware_interface`, the colcon parser in the "Build workspace" step did not accept the flag and errored with "unrecognized arguments". The flag works in a long-lived local dev workspace but not reliably in this minimal CI setup. The build step failed immediately; later steps were skipped.
 - **Fix applied:** (1) Added `--skip-keys "dynamixel_sdk"` to the targeted rosdep command so the apt version is never installed. (2) Removed the `--allow-overriding dynamixel_sdk` line from the colcon build (the packages-select now builds the pure submodule copy). This matches the intent of the original README command while being robust for CI.
 - **Prevention rule:** For packages that exist both as git submodules and as ros-*-<name> debs (DynamixelSDK family is a recurring case), always use rosdep `--skip-keys` in CI workflows instead of (or in addition to) relying on `--allow-overriding` at build time. Prefer testing the exact sequence (setup-ros + rosdep with the same --from-paths + colcon with the project's flags) when adding CI. Consider `ros-tooling/action-ros-ci` for future workflows as it is already used successfully by the vendored open_manipulator stack.
+
+### LaTeX `\text` used without amsmath — 2026-06-16
+
+- **Severity:** Low
+- **Category:** Build
+- **File(s):** `src/dynamixel_demo/docs/dynamixel_demo.tex`
+- **Pattern:** Using math-mode macros that live in a specific package (`\text{...}` from `amsmath`, also `\eqref`, `\dfrac`, etc.) without `\usepackage{amsmath}`, producing a fatal "Undefined control sequence" with no PDF output.
+- **Root cause:** The conversion formula used `\text{rad}`/`\text{tick}` inside `$...$`, but the preamble only loaded `geometry`, `listings`, `booktabs`, `enumitem`, `hyperref`, `xcolor` — not `amsmath`.
+- **Fix applied:** Added `\usepackage{amsmath}` to the preamble; PDF now builds (4 pages).
+- **Prevention rule:** Whenever a `.tex` uses `\text`, `\eqref`, `align`, `\dfrac` or other AMS macros, add `\usepackage{amsmath}` up front; do a clean `latexmk`/`pdflatex` pass before considering the doc done rather than assuming common macros are built-in.
